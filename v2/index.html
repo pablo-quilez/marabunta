@@ -36,14 +36,12 @@
     </style>
 </head>
 <body>
-    <div id="ui">Level: <span id="lvl">1</span> | Best: <span id="high-level">0</span> | Black ants: <span id="count">0</span> | Red ants: <span id="enemy-count">0</span></div>
+    <div id="ui">Level: <span id="lvl">1</span> | Best: <span id="high-level">0</span></div>
     <div id="level-screen">Level 1</div>
     <canvas id="gameCanvas"></canvas>
     <script>
         
         const uiLvl = document.getElementById('lvl');
-        const uiCount = document.getElementById('count');
-        const uiEnemyCount = document.getElementById('enemy-count');
         const canvas = document.getElementById('gameCanvas');
         const lvlScreen = document.getElementById('level-screen');
         const ctx = canvas.getContext('2d');
@@ -543,8 +541,6 @@
                 // Update them as some ants were removed
                 playerAnts = ants.filter(a => a.isPlayer).length;
                 enemyAnts = ants.filter(a => !a.isPlayer).length;
-                uiCount.innerText = playerAnts;
-                uiEnemyCount.innerText = enemyAnts;
 
                 // Ending conditions
                 if (playerAnts === 0) {
