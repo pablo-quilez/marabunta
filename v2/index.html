@@ -47,6 +47,8 @@
         const lvlScreen = document.getElementById('level-screen');
         const ctx = canvas.getContext('2d');
 
+        let bgBuffer = null; // Map background
+
         const img_black_1 = new Image(); img_black_1.src = 'ant_black_1.png';
         const img_black_2 = new Image(); img_black_2.src = 'ant_black_2.png';
         const img_red_1 = new Image(); img_red_1.src = 'ant_red_1.png';
@@ -308,6 +310,7 @@
         // --------------------------------------------------------------------
 
         function initLevel() {
+            createBackground();
             levelTransition = true;
             ants = [];
 
@@ -457,6 +460,31 @@
             }
         }
 
+        // Draw map background
+        function createBackground() {
+            bgBuffer = document.createElement('canvas');
+            bgBuffer.width = width;
+            bgBuffer.height = height;
+            const bgCtx = bgBuffer.getContext('2d');
+
+            bgCtx.fillStyle = "#c8ffc8";
+            bgCtx.fillRect(0, 0, width, height);
+
+            for (let i = 0; i < 100; i++) {
+                const r = Math.random() * 200;
+                const g = 200 + Math.random() * 55;
+                const b = Math.random() * 200;
+                bgCtx.fillStyle = `rgb(${r},${g},${b})`;
+                
+                bgCtx.beginPath();
+                const x = Math.random() * width;
+                const y = Math.random() * height;
+                const radius = Math.random() * 50;
+                bgCtx.arc(x, y, radius, 0, Math.PI * 2);
+                bgCtx.fill();
+            }
+        }
+
         // --------------------------------------------------------------------
         // Game Loop
         // --------------------------------------------------------------------
@@ -485,7 +513,11 @@
             target.x = rawInput.x - rect.left;
             target.y = rawInput.y - rect.top;
 
-            ctx.clearRect(0, 0, width, height); // Clear canvas
+            if (bgBuffer) {
+                ctx.drawImage(bgBuffer, 0, 0); // Draw background
+            } else {
+                ctx.clearRect(0, 0, width, height); // Clear canvas
+            }
 
             // Level transition blocks movements and ant painting for some seconds
             if (!levelTransition) {
