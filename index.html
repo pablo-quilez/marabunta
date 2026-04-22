@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marabunta</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            line-height: 1.6;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 600px;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        h1 { margin-bottom: 10px; color: #2c3e50; }
+        p.subtitle { color: #666; margin-bottom: 30px; font-style: italic; }
+        
+        .version-card {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+            text-align: left;
+        }
+        .version-card:hover {
+            border-color: #3498db;
+            background-color: #f0f7ff;
+            transform: translateY(-2px);
+        }
+        .version-title {
+            font-weight: bold;
+            font-size: 1.2rem;
+            color: #2980b9;
+            display: block;
+        }
+        .version-desc { font-size: 0.9rem; color: #555; }
+        
+        footer {
+            margin-top: 30px;
+            font-size: 0.8rem;
+            color: #888;
+        }
+        footer a { color: #3498db; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Marabunta</h1>
+        <p class="subtitle">Ant Battle Simulator</p>
+        
+        <a href="./v1/index.html" class="version-card">
+            <span class="version-title">v1: AI-Generated Baseline</span>
+            <span class="version-desc">First prototype generated from a serialized 2016 Java Android app. Basic behavior but playable.</span>
+        </a>
+
+        <a href="./v2/index.html" class="version-card">
+            <span class="version-title">v2: Human refactored</span>
+            <span class="version-desc">Manually refactored and improved. Optimized for thousands of ants. Press S for ant spawn, L to show life or D for debugging. Check Github README for detailed info.</span>
+        </a>
+
+        <footer>
+            <a href="https://github.com/pablo-quilez/marabunta" target="_blank">Code in GitHub</a>
+            <br><br>
+            <small>
+                Ant graphics modified from 
+                <a href="https://www.flaticon.com/free-icons/ant" title="ant icons" target="_blank">Freepik - Flaticon</a>
+                <br>
+                License: <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank">GNU GPL v3</a>
+            </small>
+
+        </footer>
+    </div>
+</body>
+</html>

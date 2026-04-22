@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!--
+        Marabunta Ant Game
+        Copyright (C) 2026 Pablo Quílez
+        Licensed under the GNU General Public License v3.0
+    -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Marabunta Ant Game</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #c8ffc8; font-family: monospace; }
+        canvas { 
+            display: block; 
+            touch-action: none; 
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            /* Force GPU to create its own layer */
+            will-change: transform;
+            transform: translateZ(0); 
+        }
+        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; font-weight: bold; }
+        #level-screen { 
+            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.7);
+            display: flex; justify-content: center; align-items: center; color: #ffc000; font-size: 3rem;
+            visibility: hidden;
+            z-index: 10; /* Over GPU layer */
+        }
+        #ui, #level-screen { 
+            user-select: none; 
+            -webkit-user-select: none; /* For Android/iOS */
+            cursor: default;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">Level: <span id="lvl">1</span> | Best: <span id="high-level">0</span> | Black ants: <span id="count">0</span> | Red ants: <span id="enemy-count">0</span></div>
+    <div id="level-screen">Level 1</div>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        
+        const uiLvl = document.getElementById('lvl');
+        const uiCount = document.getElementById('count');
+        const uiEnemyCount = document.getElementById('enemy-count');
+        const canvas = document.getElementById('gameCanvas');
+        const lvlScreen = document.getElementById('level-screen');
+        const ctx = canvas.getContext('2d');
+
+        const img_black_1 = new Image(); img_black_1.src = 'ant_black_1.png';
+        const img_black_2 = new Image(); img_black_2.src = 'ant_black_2.png';
+        const img_red_1 = new Image(); img_red_1.src = 'ant_red_1.png';
+        const img_red_2 = new Image(); img_red_2.src = 'ant_red_2.png';
+
+        // Flags
+        let levelTransition = false; // 3 seconds until level starts
+        let showDebug = false; // Show FPS, some data, activate it with key d
+        let showLife = false; // Show ant life, activate it with key l
+        let gameOver = false;
+
+        // Grid config
+        const cellSize = 100; 
+        let grid_player = new Map(); 
+        let grid_enemy = new Map();
+
+        // Framecount optimization to evaluate AI logic only in some frames
+        let frameCount = 0;
+        let frameCountAILimit = 2; // mod base for the AI algorithm. The logic is only applied only each X frames
+        let deactivateAI = false; // If too much CPU load, just move to random moves (e.g. if 1000 ants on screen)
+
+        // FPS and time control
+        // Algorithm adapts automatically to variable time steps (dt)
+
+        let fps_timestamp = Date.now()
+        let fps = 0;
+        let fpsDisplay = 60
+        let lastTime = performance.now();
+
+        // Game status & control
+        let width, height; // Screen size
+        let level = 1;
+        let ants = [];
+        let target = { x: 0, y: 0, active: false }; // Target coordinates
+        let rawInput = { x: 0, y: 0 }; // Raw clicked coordinates
+        let canvasRect = canvas.getBoundingClientRect();
+        let particles = []; // Global effect for particles after ant death
+
+        const DAMAGE_RADIUS = 0.6; // % of the distance to attack an enemy
+
+        // --------------------------------------------------------------------
+        // HP Bar
+        // --------------------------------------------------------------------
+
+        function drawHealthBar() {
+            const playerHP = ants.filter(a => a.isPlayer).reduce((sum, a) => sum + a.hp, 0);
+            const enemyHP = ants.filter(a => !a.isPlayer).reduce((sum, a) => sum + a.hp, 0);
+            const barHeight = 10;
+            const totalHP = playerHP + enemyHP;
+            if (totalHP === 0) return;
+
+            const playerWidth = (playerHP / totalHP) * width;
+
+            ctx.fillStyle = "#900"; // Rojo (Enemigo)
+            ctx.fillRect(0, height - barHeight, width, barHeight);
+            ctx.fillStyle = "#222"; // Negro (Jugador)
+            ctx.fillRect(0, height - barHeight, playerWidth, barHeight);
+        }
+
+        // --------------------------------------------------------------------
+        // Particle: art
+        // --------------------------------------------------------------------
+
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 3 + 2;
+                this.angle = Math.random() * Math.PI * 2;
+                this.speed = Math.random() * 4 + 2;
+                this.life = 1.0; // Opacity
+                this.color = color;
+            }
+
+            // dt is frame differential time
+            update(dt) {
+                this.x += Math.cos(this.angle) * this.speed * dt;
+                this.y += Math.sin(this.angle) * this.speed * dt;
+                this.life -= 0.03 * dt; // Fade out
+            }
+
+            draw() {
+                ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.size, this.size);
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Ant class
+        // --------------------------------------------------------------------
+
+        class Ant {
+            constructor(isPlayer, x, y, size = 30, hp = 100, damage = 1) {
+                this.isPlayer = isPlayer;
+                this.x = x;
+                this.y = y;
+                this.angle = Math.random() * 360;
+                this.speed = isPlayer ? 3 : 2;
+                this.size = size;
+                this.hp = hp;
+                this.damage = damage;
+                this.frame = 0;
+            }
+
+            // Move ant
+            // dt is time passed since last tick
+            // fc is framecounter, for performance optimization
+            update(dt, fc) {
+                // ------------------------------------------------------------
+                // Black ant and tracking active
+                // ------------------------------------------------------------
+                if (this.isPlayer && target.active) {
+                    // Pointer following algorithm (some kind of gravity well)
+                    let targetAngle = Math.atan2(target.y - this.y, target.x - this.x) * 180 / Math.PI + 90;
+                    let diff = targetAngle - this.angle;
+                    while (diff < -180) diff += 360;
+                    while (diff > 180) diff -= 360;
+                    if (Math.random() <= 0.3){
+                        this.angle += diff * 0.1 * dt; // Turn softly
+                    } else {
+                        this.angle += (Math.random() - 0.5) * 10 * dt; 
+                    }
+                // ------------------------------------------------------------
+                // Black ant and no tracking (no click / tap)
+                // Red ant if there are more than 1000 on screen
+                // ------------------------------------------------------------
+                } else if ((this.isPlayer && !target.active) || ((!this.isPlayer) && deactivateAI)) {
+                    // Random move
+                    this.angle += (Math.random() - 0.5) * 10 * dt; 
+                // ------------------------------------------------------------
+                // Red ant with AI
+                // ------------------------------------------------------------
+                } else if ((!this.isPlayer) && !deactivateAI && (fc % frameCountAILimit === 0)) {
+                    // As AI logic is CPU intense, evaluate it only in some key frames
+                    // Searches nearest victim in the grid (enemy ant)
+                    const gx = Math.floor(this.x / cellSize);
+                    const gy = Math.floor(this.y / cellSize);
+                    let closestEnemy = null;
+                    let minDist = 99999; // Vision radius
+                    const cell_search_radius = 2
+
+                    // Search closest black ant
+                    for (let x = gx - cell_search_radius; x <= gx + cell_search_radius; x++) {
+                        for (let y = gy - cell_search_radius; y <= gy + cell_search_radius; y++) {
+                            const key = `${x},${y}`;
+                            const cell = grid_player.get(key); 
+                            if (cell) {
+                                cell.forEach(enemy => {
+                                    const d = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                                    if (d < minDist) {
+                                        minDist = d;
+                                        closestEnemy = enemy;
+                                    }
+                                });
+                            }
+                        }
+                    }
+
+                    // If there is an enemy close, seek it. If not, just normal move
+                    if (closestEnemy) {
+                        // To avoid the swarm becoming only 1 ant in the same exact position, separate a little bit between mate ants
+                        let separationX = 0;
+                        let separationY = 0;
+                        const myKey = `${Math.floor(this.x / cellSize)},${Math.floor(this.y / cellSize)}`;
+                        const mates = grid_enemy.get(myKey);
+
+                        // Attraction angle:
+                        let targetAngle = Math.atan2(closestEnemy.y - this.y, closestEnemy.x - this.x) * 180 / Math.PI + 90;
+
+                        if (mates) {
+                            mates.forEach(mate => {
+                                if (mate !== this) {
+                                    let dist = Math.hypot(this.x - mate.x, this.y - mate.y);
+                                    if (dist < 15) { // Comfort size
+                                        separationX += this.x - mate.x;
+                                        separationY += this.y - mate.y;
+                                    }
+                                }
+                            });
+                        }
+
+                        if (separationX !== 0 || separationY !== 0) {
+                            let sepAngle = Math.atan2(separationY, separationX) * 180 / Math.PI + 90;
+                            // Add separation angle to avoid stepping together
+                            targetAngle = targetAngle * 0.7 + sepAngle * 0.3; 
+                        }
+
+                        let diff = targetAngle - this.angle;
+                        while (diff < -180) diff += 360;
+                        while (diff > 180) diff -= 360;
+                        this.angle += diff * 0.05 * dt;
+                    } else {
+                        this.angle += (Math.random() - 0.5) * 10 * dt; // Normal random move
+                    }
+
+                }
+
+                // ------------------------------------------------------------
+                // Now we have computed the angle, we proceed to move the ant
+
+                // Vector based calculation
+                this.x += this.speed * Math.sin(this.angle * Math.PI / 180) * dt;
+                this.y -= this.speed * Math.cos(this.angle * Math.PI / 180) * dt;
+
+                // Outside the screen (rebounding)
+                if (this.x < 0) {
+                    this.angle = 90 + (Math.random() - 0.5) * 45; // Point to the right
+                } else if (this.x > width) {
+                    this.angle = 270 + (Math.random() - 0.5) * 45; // Point to the left
+                }
+                if (this.y < 0) {
+                    this.angle = 180 + (Math.random() - 0.5) * 45; // Point down
+                } else if (this.y > height) {
+                    this.angle = 0 + (Math.random() - 0.5) * 45; // Point up
+                }
+
+                // Animation is based on 2 different frames, switch it to do generate the movement feeling
+                if (Math.random() > 0.8) this.frame = this.frame === 0 ? 1 : 0;
+            }
+
+            // Paint ant on canvas
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Instead of allowing any given angle (infinite possibilities), we restrict it to 72 possibilities (each 5º)
+                // otherwise GPU needs to rotate the bitmap for each angle. Now with only 72, GPU automatically caches it.
+                // Player won't notice the difference.
+                let snappedAngle = Math.round(this.angle / 5) * 5;
+                ctx.rotate(snappedAngle * Math.PI / 180); // Instead of ctx.rotate(this.angle * Math.PI / 180);
+                
+                let framePicture = (Math.floor(Date.now() / 150) % 2 === 0) ? this.isPlayer ? img_black_1 : img_red_1 : this.isPlayer ? img_black_2 : img_red_2;
+                ctx.drawImage(framePicture, -this.size/2, -this.size/2, this.size, this.size);
+
+                // ------------------------------------------------------------
+                // DEBUG info - Life
+                // ------------------------------------------------------------
+                if (showLife){
+                    // Paint ant life
+                    ctx.font = "bold 12px Arial"; 
+                    ctx.fillStyle = "black";
+                    ctx.textAlign = "center";
+                    let yTexto = -this.size / 2 - 5; // 5 pixels above ant head
+                    ctx.fillText(Math.ceil(this.hp), 0, yTexto);
+                    // Small shadow
+                    ctx.fillStyle = "rgba(255,255,255,0.5)";
+                    ctx.fillText(Math.ceil(this.hp), 1, yTexto + 1);
+                    // ------------------------------------
+                }
+                
+                ctx.restore();
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Game logic
+        // --------------------------------------------------------------------
+
+        function initLevel() {
+            levelTransition = true;
+            ants = [];
+
+            // ----------------------------------------------------------------
+            // SCORE Update score HUD (highest completed level)
+            // ----------------------------------------------------------------
+            let highLevel = localStorage.getItem('marabunta_highlevel') || 0;
+            let currentSuccededLevel = level - 1
+            if (currentSuccededLevel > highLevel){
+                localStorage.setItem('marabunta_highlevel', currentSuccededLevel);
+                highLevel = currentSuccededLevel
+            }
+            document.getElementById('high-level').innerText = highLevel;
+            // ----------------------------------------------------------------
+
+            // Create black and read ants, grow following a power-law
+            // Originally: let playerAntsCount = 195 + (level * 5);
+            // Originally: let enemyCount = 20 + (level * 10);
+            let playerAntsCount = 199 + Math.pow(level, 2);
+            let enemyCount = 19 + Math.floor(Math.pow(level, 2.2));
+            let isBossLevel = level % 5 === 0;
+            let bossHP = playerAntsCount * 100;
+
+            // Create black ants
+            for(let i=0; i<playerAntsCount; i++) ants.push(new Ant(true, 30 + Math.random()* (width - 60), height - 50));
+            
+            // Boss level es 1 giant ant, each 5 levels
+            if (isBossLevel) {
+                ants.push(new Ant(false, width/2, 128, 128, bossHP, 10)); // Only 1 giant ant on boss levels
+            } else {
+                for(let i=0; i<enemyCount; i++) ants.push(new Ant(false, Math.random()*width, 50));
+            }
+            
+            // Title screen, show it only 3 seconds
+            lvlScreen.innerText = "Level " + level;
+            lvlScreen.style.visibility = "visible";
+            setTimeout(() => {
+                lvlScreen.style.visibility = "hidden";
+                levelTransition = false; 
+            }, 2000);
+        }
+
+        // Optimization, instead of check N ants vs M ants, I divide the grid in smaller cells
+        // Therefore we can test only ants from a cell with ants in the same or near cells
+        // Tested with 20k ants and still working, limit starts being drawing instead of checking
+        function updateGrid(){
+            grid_player = new Map();
+            grid_enemy = new Map();
+            for (let i = 0; i < ants.length; i++){
+                const a = ants[i];
+                const gx = Math.floor(a.x / cellSize);
+                const gy = Math.floor(a.y / cellSize);
+                const key = `${gx},${gy}`;
+                if (a.isPlayer) {
+                    if (!grid_player.has(key)) grid_player.set(key, []);
+                    grid_player.get(key).push(a);
+                } else {
+                    if (!grid_enemy.has(key)) grid_enemy.set(key, []);
+                    grid_enemy.get(key).push(a);
+                }
+            }
+        }
+
+        // attacker, victim are Ant objects
+        // dt is differential time passed in ms between ticks
+        function tryBite(attacker, victim, dt){
+            // Find attacker head
+            const headX = attacker.x + (attacker.size / 2) * Math.sin(attacker.angle * Math.PI / 180);
+            const headY = attacker.y - (attacker.size / 2) * Math.cos(attacker.angle * Math.PI / 180);
+            // Find victim body and calculate distance
+            const dx = headX - victim.x;
+            const dy = headY - victim.y;
+            const distToBody = Math.sqrt(dx * dx + dy * dy);
+            // Reduce life
+            if (distToBody < victim.size * DAMAGE_RADIUS) {
+                victim.hp -= attacker.damage * dt;
+            }
+        }
+
+        // Pre: grid is updated (updateGrid)
+        // dt is differential time passed in ms between ticks
+        function checkCollisions(dt) {
+     
+            // Search near victims and bite them
+            for (let i = 0; i < ants.length; i++) {
+                const attacker = ants[i];
+                const gx = Math.floor(attacker.x / cellSize);
+                const gy = Math.floor(attacker.y / cellSize);
+
+                // Look for same and 8 near cells to compute attacks
+                for (let x = gx - 1; x <= gx + 1; x++) {
+                    for (let y = gy - 1; y <= gy + 1; y++) {
+                        const key = `${x},${y}`;
+                        const cell = attacker.isPlayer ? grid_enemy.get(key) : grid_player.get(key);
+                        
+                        if (cell) {
+                            for (let j = 0; j < cell.length; j++) {
+                                const victim = cell[j];
+                                // Only bites different color
+                                if (attacker.isPlayer !== victim.isPlayer) {
+                                    tryBite(attacker, victim, dt);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Delete dead ants. Spawn blood drops. They have its internal lifecycle.
+            ants.forEach(a => {
+                if (a.hp <= 0) {
+                    let color = a.isPlayer ? "#222" : "#900"; // Black or red color
+                    if (particles.length < 200) { // Limit to 200 particles
+                        for(let i=0; i<8; i++) { // 8 drops per ant
+                            particles.push(new Particle(a.x, a.y, color));
+                        }
+                    }
+                }
+            });
+
+            // Remove all dead ants
+            ants = ants.filter(a => a.hp > 0);
+
+        }
+
+        function endGame(win) {
+            if (win){
+                level++;
+                uiLvl.innerText = level;
+                initLevel();
+            } else {
+                gameOver = true; // Flag to block a new title screen during some seconds
+                                 // This kills the gameLoop
+                lvlScreen.innerText = "YOU LOSE!";
+                lvlScreen.style.visibility = "visible";
+                level = 1;
+                
+                // Wait 3 sconds before game restarting
+                setTimeout(() => {
+                    window.onclick = () => {
+                        window.onclick = null;
+                        gameOver = false;
+                        initLevel(); // Restart game
+                        gameLoop();
+                    };
+                }, 3000);
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Game Loop
+        // --------------------------------------------------------------------
+
+        function gameLoop() {
+            if (gameOver) return; // Finish looping
+
+            // Deactivate AI if too many ants on screen:
+            let playerAnts = ants.filter(a => a.isPlayer).length;
+            let enemyAnts = ants.filter(a => !a.isPlayer).length;
+            deactivateAI = (playerAnts + enemyAnts) > 1000;
+
+            frameCount += 1;
+
+            let now = performance.now();
+            let deltaTime = now - lastTime;
+            if (deltaTime > 200) deltaTime = 16.67; // To prevent jumps when switching browser tab.
+            // If cannot sustain 5 Hz, starts to lag
+            let dt = deltaTime / 16.67; // dt should be 1 by 60 Hz
+            lastTime = now;
+
+            let start = performance.now(); // Start high precision clock for debug purposes
+
+            // Input position, consider canvas because floating windows in phones can have an offset
+            const rect = canvasRect;
+            target.x = rawInput.x - rect.left;
+            target.y = rawInput.y - rect.top;
+
+            ctx.clearRect(0, 0, width, height); // Clear canvas
+
+            // Level transition blocks movements and ant painting for some seconds
+            if (!levelTransition) {
+
+                updateGrid(); // Update ants position in grid
+
+                // Process blood drops
+                particles = particles.filter(p => p.life > 0); // Delete old drops
+                particles.forEach(p => {
+                    p.update(dt);
+                    p.draw();
+                });
+                
+                // Process (move ants) and draw them
+                ants.forEach(ant => {
+                    ant.update(dt, frameCount);
+                    ant.draw();
+                });
+
+                checkCollisions(dt);
+                
+                // Update them as some ants were removed
+                playerAnts = ants.filter(a => a.isPlayer).length;
+                enemyAnts = ants.filter(a => !a.isPlayer).length;
+                uiCount.innerText = playerAnts;
+                uiEnemyCount.innerText = enemyAnts;
+
+                // Ending conditions
+                if (playerAnts === 0) {
+                    endGame(false);
+                }
+                if (enemyAnts === 0) {
+                    endGame(true);
+                }
+
+            }
+
+            drawHealthBar();
+
+            // ----------------------------------------------------------------
+            // Debug - fps
+            now = Date.now();
+            fps = Math.round(1000 / (now - fps_timestamp));
+            fps_timestamp = now;
+            fpsDisplay = fpsDisplay * 0.9 + fps * 0.1; // Average
+            let frameProcessTime = performance.now() - start; // JS real tick time
+            if (showDebug) {
+                ctx.fillStyle = "red";
+                ctx.font = "20px Arial";
+                ctx.fillText("FPS: " + Math.round(fpsDisplay) + " | JS Time: " + frameProcessTime.toFixed(2) + "ms" + " | Ants: " + ants.length, 10, height - 20);
+            }
+            // ----------------------------------------------------------------
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --------------------------------------------------------------------
+        // Control Events
+        // --------------------------------------------------------------------
+
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        });
+
+        const updatePosition = (e) => {
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            rawInput.x = clientX;
+            rawInput.y = clientY;
+        };
+
+        // Activate tracking
+        window.addEventListener('mousedown', (e) => { target.active = true; });
+        window.addEventListener('touchstart', (e) => { target.active = true; });
+
+        // Update coordinates
+        window.addEventListener('mousemove', updatePosition);
+        window.addEventListener('touchmove', updatePosition, { passive: true });
+
+        // Deactivate tracking
+        window.addEventListener('mouseup', () => target.active = false);
+        window.addEventListener('touchend', () => target.active = false);
+
+        window.addEventListener('resize', () => {
+            canvasRect = canvas.getBoundingClientRect();
+        });
+
+        // Start when loading is finished
+        window.onload = () => {
+            window.dispatchEvent(new Event('resize'));
+            initLevel();
+            gameLoop();
+        }
+
+        // Press D -> Activate debug mode
+        // Press L -> Show life
+        // Press S -> Spawn 500 black and 500 red ants!
+        window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'd') showDebug = !showDebug;
+            if (e.key.toLowerCase() === 'l') showLife = !showLife;
+            if (e.key.toLowerCase() === 's') {
+                for(let i=0; i<50; i++) {
+                    ants.push(new Ant(true, Math.random()*width, height - 50));
+                    ants.push(new Ant(false, Math.random()*width, 50));
+                }
+            }
+        });
+    </script>
+    <!--
+        Attribution - Ant icons created by Freepik - Flaticon
+        https://www.flaticon.com/free-icons/ant
+        https://www.flaticon.com/free-icon/ant_47288#term=ant&page=1&position=3
+    -->
+</body>
+</html>

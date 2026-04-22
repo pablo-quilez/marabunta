@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Marabunta Web</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #c8ffc8; font-family: monospace; }
+        canvas { display: block; touch-action: none; }
+        #ui { position: absolute; top: 10; left: 10; pointer-events: none; font-weight: bold; }
+        #level-screen { 
+            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.7);
+            display: flex; justify-content: center; align-items: center; color: #ffc000; font-size: 3rem;
+            visibility: hidden;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">Level: <span id="lvl">1</span> | Black ants: <span id="count">0</span></div>
+    <div id="level-screen">Level 1</div>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const uiLvl = document.getElementById('lvl');
+const uiCount = document.getElementById('count');
+const lvlScreen = document.getElementById('level-screen');
+
+let width, height;
+let level = 1;
+let ants = [];
+let target = { x: 0, y: 0, active: false };
+
+// Configuración de assets (usando placeholders por ahora)
+const ANT_SIZE = 30;
+
+class Ant {
+    constructor(isPlayer, x, y, size = 1, hp = 100) {
+        this.isPlayer = isPlayer;
+        this.x = x;
+        this.y = y;
+        this.angle = Math.random() * 360;
+        this.speed = isPlayer ? 3 : 2;
+        this.size = size;
+        this.hp = hp;
+        this.damage = isPlayer ? 2 : 1;
+        this.frame = 0;
+    }
+
+    update() {
+        // Lógica de seguimiento (tu algoritmo de gravedad)
+        if (this.isPlayer && target.active) {
+            let targetAngle = Math.atan2(target.y - this.y, target.x - this.x) * 180 / Math.PI + 90;
+            let diff = targetAngle - this.angle;
+            while (diff < -180) diff += 360;
+            while (diff > 180) diff -= 360;
+            if (Math.random() <= 0.3){
+  		this.angle += diff * 0.1; // Suavizado de giro
+  	    }
+        } else if (!this.isPlayer) {
+            // IA Enemiga básica: buscar la hormiga jugadora más cercana
+            this.angle += (Math.random() - 0.5) * 10; 
+        }
+
+        // Movimiento basado en vector
+        this.x += this.speed * Math.sin(this.angle * Math.PI / 180);
+        this.y -= this.speed * Math.cos(this.angle * Math.PI / 180);
+
+        // Rebote en bordes
+        if (this.x < 0 || this.x > width) this.angle += 180;
+        if (this.y < 0 || this.y > height) this.angle += 180;
+
+        // Animación de 2 frames
+        if (Math.random() > 0.8) this.frame = this.frame === 0 ? 1 : 0;
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle * Math.PI / 180);
+        
+        // Dibujo simplificado (Cabeza amarilla para debug como en tu código)
+        ctx.fillStyle = this.isPlayer ? "black" : "red";
+        ctx.fillRect(-ANT_SIZE/4 * this.size, -ANT_SIZE/2 * this.size, (ANT_SIZE/2)*this.size, ANT_SIZE*this.size);
+        
+        // Cabeza (donde ataca)
+        ctx.fillStyle = "yellow";
+        ctx.fillRect(-2, -ANT_SIZE/2 * this.size, 4, 4);
+        
+        ctx.restore();
+    }
+}
+
+function initLevel() {
+    ants = [];
+    // Tus 100 hormigas
+    for(let i=0; i<100; i++) ants.push(new Ant(true, Math.random()*width, height - 50));
+    
+    // Enemigos crecientes + Jefe cada 5
+    let enemyCount = 20 + (level * 10);
+    let isBossLevel = level % 5 === 0;
+    
+    if (isBossLevel) {
+        ants.push(new Ant(false, width/2, 50, 3, 1000)); // La Hormiga Gigante
+    } else {
+        for(let i=0; i<enemyCount; i++) ants.push(new Ant(false, Math.random()*width, 50));
+    }
+    
+    lvlScreen.innerText = "Level " + level;
+    lvlScreen.style.visibility = "visible";
+    setTimeout(() => lvlScreen.style.visibility = "hidden", 2000);
+}
+
+function checkCollisions() {
+    const players = ants.filter(a => a.isPlayer);
+    const enemies = ants.filter(a => !a.isPlayer);
+
+    players.forEach(p => {
+        enemies.forEach(e => {
+            let dx = p.x - e.x;
+            let dy = p.y - e.y;
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            
+            if (dist < 20 * e.size) {
+                // Lógica de daño por la espalda (simplificada)
+                // Si la cabeza de P toca a E, E sufre daño.
+                e.hp -= p.damage;
+                if (e.hp <= 0) ants = ants.filter(a => a !== e);
+            }
+        });
+    });
+}
+
+function gameLoop() {
+    ctx.clearRect(0, 0, width, height);
+    
+    ants.forEach(ant => {
+        ant.update();
+        ant.draw();
+    });
+
+    checkCollisions();
+    
+    uiCount.innerText = ants.filter(a => a.isPlayer).length;
+    
+    if (ants.filter(a => !a.isPlayer).length === 0) {
+        level++;
+        uiLvl.innerText = level;
+        initLevel();
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+// Eventos de control
+window.addEventListener('resize', () => {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+});
+
+const handleInput = (e) => {
+    target.active = true;
+    target.x = e.touches ? e.touches[0].clientX : e.clientX;
+    target.y = e.touches ? e.touches[0].clientY : e.clientY;
+};
+
+window.addEventListener('mousedown', handleInput);
+window.addEventListener('mousemove', handleInput);
+window.addEventListener('touchstart', handleInput);
+window.addEventListener('touchmove', handleInput);
+window.addEventListener('mouseup', () => target.active = false);
+window.addEventListener('touchend', () => target.active = false);
+
+// Inicio
+window.dispatchEvent(new Event('resize'));
+initLevel();
+gameLoop();
+
+</script>
+</body>
+</html>
