@@ -4,8 +4,8 @@
 I recovered a personal project from 2016 originally written in Java (Android Studio) and decided to bring it to the web. This repo is a side-by-side comparison of what happens when you let an AI port legacy code vs. when a human refactors it for a performance and features.
 
 ## 🚀 The Experiment
-- **v1 (AI Baseline):** Core logic ported by Gemini from the original Java code. It works, but many features are missing. Also some bugs are present. [Play here](./v1/index.html)
-- **v2 (Human Refactored):** Manually refactored and improved (logic, HUD, graphics, steering behavior, local avoidance, etc.). Added many features (e.g. Boss level) and logic. Optimized for thousands of active ants at 60 FPS. [Play here](./v2/index.html)
+- **v1 (AI Baseline):** Core logic ported by Gemini from the original Java code. It works, but many features are missing. Also some bugs are present. [Play here](https://pablo-quilez.github.io/marabunta/v1/index.html)
+- **v2 (Human Refactored):** Manually refactored and improved (logic, HUD, graphics, steering behavior, local avoidance, etc.). Added many features (e.g. Boss level) and logic. Optimized for thousands of active ants at 60 FPS. [Play here](https://pablo-quilez.github.io/marabunta/v2/index.html)
 
 ## 🕹️ How to play? (v2)
 
